@@ -1,0 +1,32 @@
+services:
+  saveaz-telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: saveaz-telegram-bot
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=/app/data/saveaz.db
+      - BOT_MODE=webhook
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - SAVE_API_URL=${SAVE_API_URL:-http://localhost:3000}
+      - ADMIN_TELEGRAM_IDS=${ADMIN_TELEGRAM_IDS}
+      - WEBHOOK_DOMAIN=${WEBHOOK_DOMAIN}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - saveaz_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  saveaz_data:
+    driver: local
