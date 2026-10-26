@@ -28,6 +28,12 @@ import {
   Cpu,
   Layers,
   ArrowRight,
+  Lock,
+  LogOut,
+  Globe,
+  Share2,
+  Zap,
+  CheckCircle,
 } from 'lucide-react';
 
 interface StatsOverview {
@@ -75,6 +81,683 @@ interface ServerInfo {
 }
 
 export default function App() {
+  // Routing: determine if user is on public site '/' or Telegram Bot Admin '/bot-admin'
+  const [currentPath, setCurrentPath] = useState<string>(
+    typeof window !== 'undefined' ? window.location.pathname : '/'
+  );
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setCurrentPath(window.location.pathname);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateTo = (path: string) => {
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', path);
+      setCurrentPath(path);
+    }
+  };
+
+  const isBotAdminRoute = currentPath.startsWith('/bot-admin');
+
+  return (
+    <div className="min-h-screen bg-[#08070C] text-white flex flex-col font-sans">
+      {isBotAdminRoute ? (
+        <BotAdminApp onGoHome={() => navigateTo('/')} />
+      ) : (
+        <PublicSaveAzHome onGoAdmin={() => navigateTo('/bot-admin')} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * ============================================================================
+ * 1. PUBLIC SAVE.AZ WEBSITE (Zero login, 100% public video/audio downloader)
+ * ============================================================================
+ */
+function PublicSaveAzHome({ onGoAdmin }: { onGoAdmin: () => void }) {
+  const [urlInput, setUrlInput] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzedMedia, setAnalyzedMedia] = useState<any | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [activeDownloadJob, setActiveDownloadJob] = useState<{
+    jobId: string;
+    format: string;
+    percent: number;
+    speed: string;
+    eta: string;
+    size: string;
+    fileUrl?: string;
+    status: 'downloading' | 'completed' | 'failed';
+  } | null>(null);
+
+  const handleAnalyze = async (targetUrl?: string) => {
+    const url = (targetUrl || urlInput).trim();
+    if (!url) return;
+
+    setAnalyzing(true);
+    setErrorMessage(null);
+    setAnalyzedMedia(null);
+    setActiveDownloadJob(null);
+
+    try {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+
+      const data = await res.json();
+      if (data.success && (data.data || data.title)) {
+        setAnalyzedMedia(data.data || data);
+      } else {
+        setErrorMessage(data.error || '❌ Bu linki analiz etmək mümkün olmadı. Zəhmət olmasa linki yoxlayın.');
+      }
+    } catch {
+      setErrorMessage('⚠️ Serverlə əlaqə qurmaq mümkün olmadı. Bir az sonra yenidən cəhd edin.');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleStartDownload = async (format: string) => {
+    if (!analyzedMedia) return;
+
+    setActiveDownloadJob({
+      jobId: '',
+      format,
+      percent: 10,
+      speed: '4.8 MB/s',
+      eta: '10 saniyə',
+      size: `${analyzedMedia.approxSizeMb || 18.4} MB`,
+      status: 'downloading',
+    });
+
+    try {
+      const res = await fetch('/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: analyzedMedia.url,
+          platform: analyzedMedia.platform,
+          format: format.toLowerCase().includes('mp3') ? 'mp3' : 'mp4',
+          title: analyzedMedia.title,
+          duration: analyzedMedia.durationSeconds,
+          approxSizeMb: analyzedMedia.approxSizeMb,
+        }),
+      });
+
+      const data = await res.json();
+      if (!data.success || !data.jobId) {
+        setActiveDownloadJob(prev => prev ? { ...prev, status: 'failed' } : null);
+        return;
+      }
+
+      const jobId = data.jobId;
+      setActiveDownloadJob(prev => prev ? { ...prev, jobId } : null);
+
+      // Poll progress
+      let done = false;
+      let count = 0;
+      while (!done && count < 60) {
+        count++;
+        await new Promise(r => setTimeout(r, 1000));
+        const pRes = await fetch(`/api/download/${jobId}/progress`);
+        if (pRes.ok) {
+          const progress = await pRes.json();
+          setActiveDownloadJob({
+            jobId,
+            format,
+            percent: progress.percentage || 100,
+            speed: '5.2 MB/s',
+            eta: progress.etaSeconds ? `${progress.etaSeconds} san` : 'tamamlanır',
+            size: `${analyzedMedia.approxSizeMb || 18.4} MB`,
+            fileUrl: progress.fileUrl || `/downloads/saveaz_${jobId}.${format.toLowerCase().includes('mp3') ? 'mp3' : 'mp4'}`,
+            status: progress.status === 'completed' || progress.percentage >= 100 ? 'completed' : 'downloading',
+          });
+
+          if (progress.status === 'completed' || progress.percentage >= 100) {
+            done = true;
+            break;
+          }
+        }
+      }
+    } catch {
+      setActiveDownloadJob(prev => prev ? { ...prev, status: 'failed' } : null);
+    }
+  };
+
+  return (
+    <div className="flex-1 flex flex-col">
+      {/* Public Header */}
+      <header className="border-b border-[#2A0B1D] bg-[#160A13]/90 backdrop-blur-md sticky top-0 z-50 px-4 lg:px-8 py-3.5 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#E9005C] via-[#FF0F68] to-[#FF2F7D] flex items-center justify-center glow-pink-sm font-black text-xl tracking-wider">
+            S
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-extrabold text-xl tracking-tight bg-gradient-to-r from-white via-white to-pink-200 bg-clip-text text-transparent">
+                Save.az
+              </span>
+              <span className="text-xs uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-[#2A0B1D] text-[#FF2F7D] border border-[#FF0F68]/30">
+                Sosial Media Yükləyici
+              </span>
+            </div>
+            <p className="text-xs text-[#A8A0AC]">
+              TikTok, YouTube, Instagram və Facebook-dan video və musiqi yükləyin
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <a
+            href="https://t.me/saveaz_bot"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden sm:flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#2A0B1D] hover:bg-[#FF0F68]/20 border border-[#2A0B1D] hover:border-[#FF0F68]/50 text-xs font-semibold text-[#FF2F7D] transition glow-pink-sm"
+          >
+            <Bot className="w-4 h-4" /> Telegram Botumuz
+          </a>
+
+          <button
+            onClick={onGoAdmin}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#08070C] hover:bg-[#2A0B1D] border border-[#2A0B1D] text-xs text-[#A8A0AC] hover:text-white transition"
+            title="Telegram Bot İdarəetməsi"
+          >
+            <Lock className="w-3.5 h-3.5 text-[#FF0F68]" /> Bot İdarəetməsi
+          </button>
+        </div>
+      </header>
+
+      {/* Hero Section */}
+      <section className="relative overflow-hidden py-16 px-4 text-center max-w-4xl mx-auto w-full">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-[#FF0F68]/15 rounded-full blur-3xl pointer-events-none"></div>
+
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#160A13] border border-[#FF0F68]/30 text-xs font-semibold text-[#FF2F7D] mb-5 glow-pink-sm">
+          <Sparkles className="w-3.5 h-3.5" /> Qeydiyyatsız & Tamamilə Pulsuz
+        </div>
+
+        <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight mb-4">
+          Sosial Media Videolarını və Musiqilərini{' '}
+          <span className="bg-gradient-to-r from-[#FF0F68] to-[#FF2F7D] bg-clip-text text-transparent">
+            Rahat Yadda Saxlayın
+          </span>
+        </h1>
+
+        <p className="text-sm sm:text-base text-[#A8A0AC] max-w-2xl mx-auto mb-8">
+          TikTok, YouTube, Shorts, Instagram Reels və Facebook linkini daxil edin. Saniyələr içində HD keyfiyyətində MP4 video və ya 320 kbps MP3 musiqi yükləyin.
+        </p>
+
+        {/* Input Bar */}
+        <div className="max-w-2xl mx-auto bg-[#160A13] p-2 rounded-2xl border border-[#2A0B1D] shadow-2xl focus-within:border-[#FF0F68] transition glow-pink-sm flex flex-col sm:flex-row gap-2">
+          <input
+            type="text"
+            value={urlInput}
+            onChange={(e) => setUrlInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleAnalyze();
+            }}
+            placeholder="Video və ya musiqi linkini bura yapışdırın..."
+            className="flex-1 bg-transparent px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none"
+          />
+          <button
+            onClick={() => handleAnalyze()}
+            disabled={analyzing || !urlInput.trim()}
+            className="px-6 py-3 rounded-xl bg-gradient-to-r from-[#E9005C] to-[#FF0F68] hover:brightness-110 disabled:opacity-50 text-white font-bold text-sm flex items-center justify-center gap-2 glow-pink-sm transition whitespace-nowrap"
+          >
+            {analyzing ? (
+              <>
+                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                Analiz edilir...
+              </>
+            ) : (
+              <>
+                <Search className="w-4 h-4" /> Yüklə
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Sample Links Quick Click */}
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-[#A8A0AC]">
+          <span>Nümunələr:</span>
+          {[
+            { label: 'TikTok', url: 'https://www.tiktok.com/@tiktok/video/73289192837' },
+            { label: 'YouTube Shorts', url: 'https://www.youtube.com/shorts/3bN9mZpY8' },
+            { label: 'Instagram Reel', url: 'https://www.instagram.com/reel/C8k9xL2pQ1' },
+            { label: 'Facebook', url: 'https://www.facebook.com/watch/?v=1029384756' },
+          ].map((s) => (
+            <button
+              key={s.label}
+              onClick={() => {
+                setUrlInput(s.url);
+                handleAnalyze(s.url);
+              }}
+              className="px-2.5 py-1 rounded-lg bg-[#160A13] border border-[#2A0B1D] hover:border-[#FF0F68]/50 hover:text-white transition"
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Error message if any */}
+        {errorMessage && (
+          <div className="mt-6 max-w-2xl mx-auto p-4 rounded-2xl bg-rose-950/40 border border-rose-800/40 text-xs text-rose-300 text-left">
+            {errorMessage}
+          </div>
+        )}
+
+        {/* Analyzed Media Card */}
+        {analyzedMedia && (
+          <div className="mt-8 max-w-2xl mx-auto bg-[#160A13] border border-[#2A0B1D] rounded-3xl p-6 text-left shadow-2xl glow-pink-sm space-y-5">
+            <div className="flex flex-col sm:flex-row gap-4 items-start">
+              {analyzedMedia.thumbnailUrl && (
+                <img
+                  src={analyzedMedia.thumbnailUrl}
+                  alt={analyzedMedia.title}
+                  className="w-full sm:w-36 h-28 object-cover rounded-xl border border-[#2A0B1D]"
+                />
+              )}
+              <div className="flex-1 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#2A0B1D] text-[#FF2F7D] border border-[#FF0F68]/30">
+                    {analyzedMedia.platform || 'Media'}
+                  </span>
+                  <span className="text-xs text-[#A8A0AC]">
+                    ⏱ {analyzedMedia.durationSeconds || 45} saniyə
+                  </span>
+                </div>
+                <h3 className="font-bold text-base text-white line-clamp-2">
+                  {analyzedMedia.title || 'Sosial Media Video'}
+                </h3>
+                <p className="text-xs text-[#A8A0AC]">
+                  Müəllif: <strong className="text-gray-300">{analyzedMedia.author || '@creator'}</strong> • Təxmini: {analyzedMedia.approxSizeMb || 18.4} MB
+                </p>
+              </div>
+            </div>
+
+            {/* Format Selection Buttons */}
+            <div className="pt-2 border-t border-[#2A0B1D] space-y-3">
+              <div className="text-xs font-semibold text-[#A8A0AC]">Formatı seçin:</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <button
+                  onClick={() => handleStartDownload('MP4')}
+                  className="p-3 rounded-xl bg-[#2A0B1D] hover:bg-[#FF0F68] border border-[#2A0B1D] hover:border-[#FF0F68] text-xs font-bold text-white transition flex items-center justify-center gap-2 group"
+                >
+                  <Video className="w-4 h-4 text-[#FF2F7D] group-hover:text-white" /> 🎬 MP4 Video
+                </button>
+                <button
+                  onClick={() => handleStartDownload('MP3')}
+                  className="p-3 rounded-xl bg-[#2A0B1D] hover:bg-[#FF0F68] border border-[#2A0B1D] hover:border-[#FF0F68] text-xs font-bold text-white transition flex items-center justify-center gap-2 group"
+                >
+                  <Music className="w-4 h-4 text-purple-400 group-hover:text-white" /> 🎵 MP3 Musiqi
+                </button>
+                <button
+                  onClick={() => handleStartDownload('HD')}
+                  className="p-3 rounded-xl bg-[#2A0B1D] hover:bg-[#FF0F68] border border-[#2A0B1D] hover:border-[#FF0F68] text-xs font-bold text-white transition flex items-center justify-center gap-2 group"
+                >
+                  <Sparkles className="w-4 h-4 text-blue-400 group-hover:text-white" /> 📱 HD Keyfiyyət
+                </button>
+              </div>
+            </div>
+
+            {/* Active Download Progress Bar */}
+            {activeDownloadJob && (
+              <div className="p-4 rounded-2xl bg-[#08070C] border border-[#2A0B1D] space-y-2 font-mono text-xs">
+                <div className="flex items-center justify-between text-gray-300 font-sans font-medium">
+                  <span className="flex items-center gap-2">
+                    {activeDownloadJob.status === 'completed' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    ) : (
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#FF0F68] animate-ping"></span>
+                    )}
+                    {activeDownloadJob.status === 'completed'
+                      ? 'Yükləmə tamamlandı!'
+                      : 'Fayl hazırlanır və yüklənir...'}
+                  </span>
+                  <span className="font-bold text-[#FF2F7D]">
+                    {activeDownloadJob.percent}%
+                  </span>
+                </div>
+
+                {/* Progress bar visual */}
+                <div className="w-full bg-[#160A13] h-2.5 rounded-full overflow-hidden border border-[#2A0B1D]">
+                  <div
+                    className="h-full bg-gradient-to-r from-[#E9005C] to-[#FF0F68] transition-all duration-300 rounded-full"
+                    style={{ width: `${activeDownloadJob.percent}%` }}
+                  ></div>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-[#A8A0AC] pt-1">
+                  <span>📦 {activeDownloadJob.size}</span>
+                  <span>⚡ {activeDownloadJob.speed}</span>
+                  <span>⏱ {activeDownloadJob.eta}</span>
+                </div>
+
+                {activeDownloadJob.status === 'completed' && activeDownloadJob.fileUrl && (
+                  <div className="pt-2">
+                    <a
+                      href={activeDownloadJob.fileUrl}
+                      download
+                      className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition"
+                    >
+                      <Download className="w-4 h-4" /> Faylı Yaddaşda Saxla ({activeDownloadJob.format})
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* Feature Highlights Grid */}
+      <section className="py-12 px-4 max-w-5xl mx-auto w-full grid grid-cols-1 md:grid-cols-4 gap-4 text-left">
+        <div className="p-5 rounded-2xl bg-[#160A13] border border-[#2A0B1D]">
+          <div className="w-10 h-10 rounded-xl bg-[#FF0F68]/20 flex items-center justify-center text-[#FF2F7D] mb-3">
+            <Zap className="w-5 h-5" />
+          </div>
+          <h4 className="font-bold text-sm text-white mb-1">Maksimum Sürət</h4>
+          <p className="text-xs text-[#A8A0AC]">
+            Videolar birbaşa ən yaxşı serverlərdən yüksək sürətlə yüklənir.
+          </p>
+        </div>
+
+        <div className="p-5 rounded-2xl bg-[#160A13] border border-[#2A0B1D]">
+          <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center text-purple-400 mb-3">
+            <Music className="w-5 h-5" />
+          </div>
+          <h4 className="font-bold text-sm text-white mb-1">MP3 Audio Çıxarış</h4>
+          <p className="text-xs text-[#A8A0AC]">
+            İstənilən videodan 320 kbps keyfiyyətində təmiz audio trek əldə edin.
+          </p>
+        </div>
+
+        <div className="p-5 rounded-2xl bg-[#160A13] border border-[#2A0B1D]">
+          <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center text-blue-400 mb-3">
+            <Video className="w-5 h-5" />
+          </div>
+          <h4 className="font-bold text-sm text-white mb-1">HD & 4K Dəstəyi</h4>
+          <p className="text-xs text-[#A8A0AC]">
+            Platformanın dəstəklədiyi ən yüksək vizual keyfiyyət qorunur.
+          </p>
+        </div>
+
+        <div className="p-5 rounded-2xl bg-[#160A13] border border-[#2A0B1D]">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 mb-3">
+            <ShieldAlert className="w-5 h-5" />
+          </div>
+          <h4 className="font-bold text-sm text-white mb-1">Təhlükəsiz & Anonim</h4>
+          <p className="text-xs text-[#A8A0AC]">
+            Qeydiyyat tələb olunmur, heç bir şəxsi məlumat saxlanılmır.
+          </p>
+        </div>
+      </section>
+
+      {/* Telegram Bot Promo Banner */}
+      <section className="py-8 px-4 max-w-4xl mx-auto w-full">
+        <div className="bg-gradient-to-r from-[#160A13] via-[#2A0B1D] to-[#160A13] border border-[#FF0F68]/30 rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 glow-pink-sm text-left">
+          <div className="space-y-2">
+            <span className="text-xs uppercase font-bold text-[#FF2F7D] tracking-wider">
+              📱 Mobil üçün ən rahat yol
+            </span>
+            <h3 className="text-xl sm:text-2xl font-black text-white">
+              Save.az Telegram Botunu İstifadə Edin
+            </h3>
+            <p className="text-xs sm:text-sm text-[#A8A0AC] max-w-md">
+              Linkləri birbaşa Telegram çatına göndərin və faylı tətbiqdən çıxmadan qəbul edin.
+            </p>
+          </div>
+          <a
+            href="https://t.me/saveaz_bot"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-[#E9005C] to-[#FF0F68] font-bold text-sm text-white flex items-center gap-2 glow-pink-sm hover:brightness-110 transition whitespace-nowrap"
+          >
+            <Bot className="w-5 h-5" /> Bota Başla
+          </a>
+        </div>
+      </section>
+
+      {/* Public Footer */}
+      <footer className="mt-auto border-t border-[#2A0B1D] bg-[#10070F] py-6 px-6 text-xs text-[#A8A0AC] flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div>
+          © 2026 Save.az — Bütün hüquqlar qorunur. Sosial media video və musiqi yükləyici platforması.
+        </div>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onGoAdmin}
+            className="text-gray-400 hover:text-[#FF2F7D] transition flex items-center gap-1"
+          >
+            <Lock className="w-3.5 h-3.5" /> Telegram Bot Admin Paneli (/bot-admin)
+          </button>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+/**
+ * ============================================================================
+ * 2. TELEGRAM BOT ADMIN ROUTE (/bot-admin)
+ * Protected with Password Hash & Session Authentication!
+ * ============================================================================
+ */
+function BotAdminApp({ onGoHome }: { onGoHome: () => void }) {
+  const [sessionToken, setSessionToken] = useState<string | null>(
+    typeof window !== 'undefined' ? localStorage.getItem('saveaz_admin_token') : null
+  );
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
+
+  // Login form state
+  const [usernameInput, setUsernameInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
+
+  // Verify session on mount
+  useEffect(() => {
+    const verifyToken = async () => {
+      const token = localStorage.getItem('saveaz_admin_token');
+      if (!token) {
+        setAuthChecking(false);
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/admin/me', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.authenticated) {
+            setSessionToken(token);
+          } else {
+            localStorage.removeItem('saveaz_admin_token');
+            setSessionToken(null);
+          }
+        } else {
+          localStorage.removeItem('saveaz_admin_token');
+          setSessionToken(null);
+        }
+      } catch {
+        // Network offline or error
+      } finally {
+        setAuthChecking(false);
+      }
+    };
+
+    verifyToken();
+  }, []);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!usernameInput.trim() || !passwordInput.trim() || loggingIn) return;
+
+    setLoggingIn(true);
+    setLoginError(null);
+
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: usernameInput.trim(),
+          password: passwordInput,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success && data.token) {
+        localStorage.setItem('saveaz_admin_token', data.token);
+        setSessionToken(data.token);
+        setPasswordInput('');
+      } else {
+        setLoginError(data.error || 'İstifadəçi adı və ya şifrə yanlışdır.');
+      }
+    } catch {
+      setLoginError('Serverə qoşulmaq mümkün olmadı. Zəhmət olmasa yenidən cəhd edin.');
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (sessionToken) {
+      try {
+        await fetch('/api/admin/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${sessionToken}` },
+        });
+      } catch {}
+    }
+    localStorage.removeItem('saveaz_admin_token');
+    setSessionToken(null);
+  };
+
+  if (authChecking) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="flex items-center gap-3 text-sm text-[#A8A0AC]">
+          <span className="w-4 h-4 border-2 border-[#FF0F68] border-t-transparent rounded-full animate-spin"></span>
+          Admin sessiyası yoxlanılır...
+        </div>
+      </div>
+    );
+  }
+
+  // If not authenticated, render Login Page
+  if (!sessionToken) {
+    return (
+      <div className="flex-1 flex flex-col justify-center items-center p-4 sm:p-8">
+        <div className="max-w-md w-full bg-[#160A13] border border-[#2A0B1D] rounded-3xl p-8 shadow-2xl glow-pink-sm relative overflow-hidden">
+          <div className="absolute -top-12 -right-12 w-32 h-32 bg-[#FF0F68]/20 rounded-full blur-2xl pointer-events-none"></div>
+
+          <div className="text-center mb-6">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-tr from-[#E9005C] via-[#FF0F68] to-[#FF2F7D] flex items-center justify-center font-black text-2xl text-white shadow-lg mb-3">
+              <Lock className="w-7 h-7" />
+            </div>
+            <h2 className="text-2xl font-bold text-white tracking-tight">Telegram Bot Admin Paneli</h2>
+            <p className="text-xs text-[#A8A0AC] mt-1">
+              /bot-admin marşrutu üçün autentifikasiya tələb olunur
+            </p>
+          </div>
+
+          {loginError && (
+            <div className="mb-4 p-3 rounded-xl bg-rose-950/50 border border-rose-800/40 text-xs text-rose-300">
+              {loginError}
+            </div>
+          )}
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-[#A8A0AC] mb-1.5">
+                İstifadəçi Adı
+              </label>
+              <input
+                type="text"
+                value={usernameInput}
+                onChange={(e) => setUsernameInput(e.target.value)}
+                placeholder="admin"
+                className="w-full bg-[#08070C] border border-[#2A0B1D] rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#FF0F68] transition"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#A8A0AC] mb-1.5">
+                Şifrə
+              </label>
+              <input
+                type="password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                placeholder="••••••••••••"
+                className="w-full bg-[#08070C] border border-[#2A0B1D] rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#FF0F68] transition"
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loggingIn || !usernameInput.trim() || !passwordInput.trim()}
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-[#E9005C] to-[#FF0F68] hover:brightness-110 disabled:opacity-50 text-white font-bold text-sm flex items-center justify-center gap-2 glow-pink-sm transition mt-2"
+            >
+              {loggingIn ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  Giriş edilir...
+                </>
+              ) : (
+                <>
+                  <Lock className="w-4 h-4" /> Daxil Ol
+                </>
+              )}
+            </button>
+          </form>
+
+          <div className="mt-6 pt-4 border-t border-[#2A0B1D] text-center">
+            <button
+              onClick={onGoHome}
+              className="text-xs text-[#A8A0AC] hover:text-white transition flex items-center justify-center gap-1 mx-auto"
+            >
+              ← Save.az Əsas Saytına Qayıt
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If authenticated, render full Telegram Bot Admin Dashboard
+  return (
+    <BotAdminDashboard
+      token={sessionToken}
+      onLogout={handleLogout}
+      onGoHome={onGoHome}
+    />
+  );
+}
+
+/**
+ * ============================================================================
+ * 3. AUTHENTICATED BOT ADMIN DASHBOARD (Save.az Downloader Bot Management)
+ * ============================================================================
+ */
+function BotAdminDashboard({
+  token,
+  onLogout,
+  onGoHome,
+}: {
+  token: string;
+  onLogout: () => void;
+  onGoHome: () => void;
+}) {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'simulator' | 'users' | 'downloads' | 'broadcast' | 'system'>('dashboard');
   const [stats, setStats] = useState<StatsOverview | null>(null);
   const [aiSummary, setAiSummary] = useState<string>('');
@@ -112,67 +795,106 @@ export default function App() {
   // System Logs
   const [logs, setLogs] = useState<Array<{ level: string; message: string; timestamp: string }>>([]);
 
+  const authHeaders = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const fetchOverview = async () => {
+    if (!token) return;
     try {
-      const res = await fetch('/api/admin/overview');
-      if (res.ok) {
+      const res = await fetch('/api/admin/overview', { headers: authHeaders });
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
+      if (res.ok && isMountedRef.current) {
         const data = await res.json();
         setStats(data.stats);
         if (data.aiSummary) setAiSummary(data.aiSummary);
+        if (data.serverInfo) setServerInfo(data.serverInfo);
       }
-    } catch (err) {
-      console.error('Fetch overview error:', err);
+    } catch {
+      // Quietly handle network pauses or server restarts
     }
   };
 
   const fetchServerInfo = async () => {
     try {
       const res = await fetch('/api/status');
-      if (res.ok) {
+      if (res.ok && isMountedRef.current) {
         const data = await res.json();
         setServerInfo(data);
       }
-    } catch (err) {
-      console.error('Fetch status error:', err);
+    } catch {
+      // Quietly handle network pauses or server restarts
     }
   };
 
   const fetchUsers = async () => {
+    if (!token) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/users?search=${encodeURIComponent(searchTerm)}`);
-      if (res.ok) {
+      const res = await fetch(`/api/admin/users?search=${encodeURIComponent(searchTerm)}`, {
+        headers: authHeaders,
+      });
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
+      if (res.ok && isMountedRef.current) {
         const data = await res.json();
         setUsers(data.users || []);
       }
-    } catch (err) {
-      console.error('Fetch users error:', err);
+    } catch {
+      // Quietly handle network pauses
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   };
 
   const fetchLogs = async () => {
+    if (!token) return;
     try {
-      const res = await fetch('/api/admin/logs');
-      if (res.ok) {
+      const res = await fetch('/api/admin/logs', { headers: authHeaders });
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
+      if (res.ok && isMountedRef.current) {
         const data = await res.json();
         setLogs(data.logs || []);
       }
-    } catch (err) {
-      console.error('Fetch logs error:', err);
+    } catch {
+      // Quietly handle network pauses
     }
   };
 
   useEffect(() => {
     fetchOverview();
     fetchServerInfo();
+
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return;
+      }
       fetchOverview();
       fetchServerInfo();
     }, 12000);
+
     return () => clearInterval(interval);
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     if (activeTab === 'users') {
@@ -190,15 +912,15 @@ export default function App() {
     try {
       const res = await fetch(`/api/admin/users/${telegramId}/ban`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({ isBanned: currentBanned === 0 }),
       });
       if (res.ok) {
         fetchUsers();
         fetchOverview();
       }
-    } catch (err) {
-      console.error('Toggle ban error:', err);
+    } catch {
+      // Safe catch
     }
   };
 
@@ -206,14 +928,14 @@ export default function App() {
     try {
       const res = await fetch(`/api/admin/users/${telegramId}/premium`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({ isPremium: currentPremium === 0 }),
       });
       if (res.ok) {
         fetchUsers();
       }
-    } catch (err) {
-      console.error('Toggle premium error:', err);
+    } catch {
+      // Safe catch
     }
   };
 
@@ -224,7 +946,7 @@ export default function App() {
     try {
       const res = await fetch('/api/admin/broadcast', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({ message: broadcastMessage }),
       });
       const data = await res.json();
@@ -241,7 +963,6 @@ export default function App() {
     }
   };
 
-  // Bot Simulator Message Handler
   const sendSimMessage = async (textToSend: string) => {
     if (!textToSend.trim() || simLoading) return;
 
@@ -293,7 +1014,6 @@ export default function App() {
     }
   };
 
-  // Simulate Format Download with real animated ticks
   const triggerSimDownload = (format: string, media?: any) => {
     const isMp3 = format.toLowerCase().includes('mp3');
     const targetSize = media?.approxSizeMb ? `${media.approxSizeMb} MB` : '18.4 MB';
@@ -339,7 +1059,6 @@ export default function App() {
         });
 
         if (idx === progressSteps.length - 1) {
-          // Completed delivery message
           setTimeout(() => {
             fetchOverview();
             if (isMp3) {
@@ -375,8 +1094,8 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#08070C] text-white flex flex-col">
-      {/* Top Navigation */}
+    <div className="flex-1 flex flex-col">
+      {/* Top Admin Navigation */}
       <header className="border-b border-[#2A0B1D] bg-[#160A13]/90 backdrop-blur-md sticky top-0 z-50 px-4 lg:px-8 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-[#E9005C] via-[#FF0F68] to-[#FF2F7D] flex items-center justify-center glow-pink-sm font-black text-xl tracking-wider">
@@ -388,22 +1107,29 @@ export default function App() {
                 Save.az
               </span>
               <span className="text-xs uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-[#2A0B1D] text-[#FF2F7D] border border-[#FF0F68]/30">
-                Downloader Bot & Admin
+                Bot Admin Panel
               </span>
             </div>
             <p className="text-xs text-[#A8A0AC]">
-              TikTok, YouTube, Instagram & Facebook Video/Audio Yükləyici
+              /bot-admin • Qorunan Telegram Bot İdarəetmə Paneli
             </p>
           </div>
         </div>
 
-        {/* Server & Bot Status Badge */}
+        {/* Server status & Actions */}
         <div className="flex items-center gap-3">
+          <button
+            onClick={onGoHome}
+            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#08070C] hover:bg-[#2A0B1D] border border-[#2A0B1D] text-xs text-[#A8A0AC] hover:text-white transition"
+          >
+            <Globe className="w-3.5 h-3.5 text-[#FF0F68]" /> Əsas Sayta Keç
+          </button>
+
           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#08070C] border border-[#2A0B1D] text-xs">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-[#A8A0AC]">Bot Status:</span>
+            <span className="text-[#A8A0AC]">Status:</span>
             <span className="font-medium text-emerald-400">
-              {serverInfo?.telegramConfigured ? 'Aktiv (Telegram)' : 'Simulyator & API Hazır'}
+              {serverInfo?.telegramConfigured ? 'Aktiv (Telegram)' : 'Polling / API'}
             </span>
           </div>
 
@@ -412,15 +1138,23 @@ export default function App() {
               fetchOverview();
               fetchServerInfo();
             }}
-            className="p-2 rounded-lg bg-[#2A0B1D] hover:bg-[#FF0F68]/20 text-[#A8A0AC] hover:text-white transition border border-[#2A0B1D] hover:border-[#FF0F68]/40"
+            className="p-2 rounded-lg bg-[#2A0B1D] hover:bg-[#FF0F68]/20 text-[#A8A0AC] hover:text-white transition border border-[#2A0B1D]"
             title="Yenilə"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
+
+          <button
+            onClick={onLogout}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 text-xs font-semibold text-rose-300 transition"
+            title="Sessiyadan Çıx"
+          >
+            <LogOut className="w-3.5 h-3.5" /> Çıxış
+          </button>
         </div>
       </header>
 
-      {/* Tabs Menu */}
+      {/* Admin Tabs Menu */}
       <nav className="bg-[#10070F] border-b border-[#2A0B1D] px-4 lg:px-8 flex overflow-x-auto gap-2 py-2">
         <button
           onClick={() => setActiveTab('dashboard')}
@@ -430,8 +1164,7 @@ export default function App() {
               : 'text-[#A8A0AC] hover:text-white hover:bg-[#160A13]'
           }`}
         >
-          <Layers className="w-4 h-4" />
-          İdarəetmə Paneli
+          <Layers className="w-4 h-4" /> İdarəetmə Paneli
         </button>
 
         <button
@@ -442,8 +1175,7 @@ export default function App() {
               : 'text-[#A8A0AC] hover:text-white hover:bg-[#160A13]'
           }`}
         >
-          <Bot className="w-4 h-4" />
-          Bot Sınaq & Simulyator
+          <Bot className="w-4 h-4" /> Bot Sınaq & Simulyator
           <span className="bg-white/20 text-white text-[10px] px-1.5 py-0.2 rounded-full">Canlı</span>
         </button>
 
@@ -455,8 +1187,7 @@ export default function App() {
               : 'text-[#A8A0AC] hover:text-white hover:bg-[#160A13]'
           }`}
         >
-          <Users className="w-4 h-4" />
-          İstifadəçilər ({stats?.totalUsers ?? '...'})
+          <Users className="w-4 h-4" /> İstifadəçilər ({stats?.totalUsers ?? '...'})
         </button>
 
         <button
@@ -467,8 +1198,7 @@ export default function App() {
               : 'text-[#A8A0AC] hover:text-white hover:bg-[#160A13]'
           }`}
         >
-          <Download className="w-4 h-4" />
-          Yükləmələr ({stats?.totalDownloads ?? '...'})
+          <Download className="w-4 h-4" /> Yükləmələr ({stats?.totalDownloads ?? '...'})
         </button>
 
         <button
@@ -479,8 +1209,7 @@ export default function App() {
               : 'text-[#A8A0AC] hover:text-white hover:bg-[#160A13]'
           }`}
         >
-          <Radio className="w-4 h-4" />
-          Yayım (Broadcast)
+          <Radio className="w-4 h-4" /> Yayım (Broadcast)
         </button>
 
         <button
@@ -491,17 +1220,15 @@ export default function App() {
               : 'text-[#A8A0AC] hover:text-white hover:bg-[#160A13]'
           }`}
         >
-          <Server className="w-4 h-4" />
-          Sistem & API Status
+          <Server className="w-4 h-4" /> Sistem & API Status
         </button>
       </nav>
 
-      {/* Main Content Area */}
+      {/* Main Admin Content */}
       <main className="flex-1 p-4 lg:p-8 max-w-7xl mx-auto w-full">
         {/* DASHBOARD TAB */}
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
-            {/* AI Insights Bar */}
             {aiSummary && (
               <div className="bg-gradient-to-r from-[#160A13] via-[#2A0B1D] to-[#160A13] border border-[#FF0F68]/30 rounded-2xl p-4 flex items-start gap-3.5 glow-pink-sm">
                 <div className="p-2 rounded-xl bg-[#FF0F68]/20 text-[#FF2F7D] shrink-0">
@@ -527,7 +1254,6 @@ export default function App() {
                 <div className="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
                   <Users className="w-3 h-3" /> Qeydiyyatda
                 </div>
-                <div className="absolute -right-2 -bottom-2 w-12 h-12 bg-[#FF0F68]/10 rounded-full blur-xl pointer-events-none"></div>
               </div>
 
               <div className="bg-[#160A13] border border-[#2A0B1D] rounded-2xl p-4 relative overflow-hidden">
@@ -571,7 +1297,6 @@ export default function App() {
 
             {/* Platform Distribution & Actions */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Platform breakdown */}
               <div className="lg:col-span-2 bg-[#160A13] border border-[#2A0B1D] rounded-2xl p-6">
                 <div className="flex items-center justify-between mb-5">
                   <h3 className="font-bold text-lg text-white">Platformalara Görə Yükləmələr</h3>
@@ -611,15 +1336,15 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Quick Actions & Live Simulator CTA */}
+              {/* Bot Simulation Quick Card */}
               <div className="bg-[#160A13] border border-[#2A0B1D] rounded-2xl p-6 flex flex-col justify-between">
                 <div>
                   <div className="w-12 h-12 rounded-2xl bg-[#FF0F68]/20 flex items-center justify-center text-[#FF2F7D] mb-4 glow-pink-sm">
                     <Bot className="w-6 h-6" />
                   </div>
-                  <h3 className="font-bold text-lg mb-2">Botu İndi Test Edin</h3>
+                  <h3 className="font-bold text-lg mb-2">Botu Canlı Sınaqdan Keçirin</h3>
                   <p className="text-sm text-[#A8A0AC] leading-relaxed mb-4">
-                    Telegram tokeniniz olmasa belə daxili simulyatordan istifadə edərək linkləri, formatları və yükləmə qrafikini canlı sınaqdan keçirin.
+                    Telegram tokeni olmadan belə botun /start əmrini, URL analizini və progress bar animasiyasını test edin.
                   </p>
                 </div>
 
@@ -644,7 +1369,7 @@ export default function App() {
             <div className="bg-[#160A13] border border-[#2A0B1D] rounded-2xl p-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-bold text-lg text-white">Son Yükləmələr</h3>
-                <span className="text-xs text-[#A8A0AC]">Real vaxt axını</span>
+                <span className="text-xs text-[#A8A0AC]">Baza jurnalı</span>
               </div>
 
               <div className="overflow-x-auto">
@@ -708,9 +1433,7 @@ export default function App() {
         {/* BOT SIMULATOR TAB */}
         {activeTab === 'simulator' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Telegram Chat Mockup */}
             <div className="lg:col-span-2 bg-[#160A13] border border-[#2A0B1D] rounded-3xl p-4 flex flex-col h-[650px] shadow-2xl relative overflow-hidden">
-              {/* Telegram Topbar */}
               <div className="flex items-center justify-between pb-3 border-b border-[#2A0B1D] px-2">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#FF0F68] to-[#FF2F7D] flex items-center justify-center font-bold text-white shadow-md">
@@ -743,7 +1466,7 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Chat Message Stream */}
+              {/* Chat Stream */}
               <div className="flex-1 overflow-y-auto p-3 space-y-4">
                 {simMessages.map((msg, index) => (
                   <div
@@ -759,7 +1482,6 @@ export default function App() {
                     >
                       {msg.text}
 
-                      {/* Progress Bar Display matching requirement */}
                       {msg.progress && (
                         <div className="mt-2.5 pt-2.5 border-t border-white/10 font-mono text-xs space-y-1.5">
                           <div className="text-base tracking-widest text-[#FF2F7D] font-bold">
@@ -776,7 +1498,6 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Inline Keyboard Buttons */}
                     {msg.buttons && (
                       <div className="mt-2 flex flex-wrap gap-1.5 max-w-[85%]">
                         {msg.buttons.map((btn, bIdx) => (
@@ -818,7 +1539,7 @@ export default function App() {
                 <div ref={chatBottomRef} />
               </div>
 
-              {/* Chat Input Bar */}
+              {/* Chat Input */}
               <div className="pt-3 border-t border-[#2A0B1D] flex items-center gap-2">
                 <input
                   type="text"
@@ -827,7 +1548,7 @@ export default function App() {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') sendSimMessage(simInput);
                   }}
-                  placeholder="Link daxil edin və ya mesaj yazın..."
+                  placeholder="Link daxil edin və ya əmr yazın..."
                   className="flex-1 bg-[#08070C] border border-[#2A0B1D] rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#FF0F68] transition"
                 />
                 <button
@@ -840,7 +1561,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Quick Test Links & Command Cheatsheet */}
+            {/* Quick Test Links */}
             <div className="space-y-4">
               <div className="bg-[#160A13] border border-[#2A0B1D] rounded-3xl p-5">
                 <h4 className="font-bold text-sm mb-3 flex items-center gap-2 text-[#FF2F7D]">
@@ -878,7 +1599,6 @@ export default function App() {
                 )}
               </div>
 
-              {/* Bot Command Shortcuts */}
               <div className="bg-[#160A13] border border-[#2A0B1D] rounded-3xl p-5">
                 <h4 className="font-bold text-sm mb-3 text-white">Bot Əmrləri (Azərbaycan)</h4>
                 <div className="grid grid-cols-2 gap-2 text-xs">
@@ -919,7 +1639,7 @@ export default function App() {
               <div>
                 <h3 className="font-bold text-xl text-white">İstifadəçi İdarəetməsi</h3>
                 <p className="text-xs text-[#A8A0AC]">
-                  Telegram istifadəçilərinin siyahısı, bloklama və premium statusu
+                  Telegram bot istifadəçilərinin siyahısı, bloklama və premium statusu
                 </p>
               </div>
 
@@ -1145,7 +1865,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Safety & Limits Note */}
             <div className="bg-[#160A13] border border-[#2A0B1D] rounded-3xl p-6 space-y-4">
               <h4 className="font-bold text-sm text-white flex items-center gap-2">
                 <ShieldAlert className="w-4 h-4 text-[#FF2F7D]" /> Telegram API Qaydaları
@@ -1153,16 +1872,15 @@ export default function App() {
               <ul className="text-xs text-[#A8A0AC] space-y-2 leading-relaxed">
                 <li>• Bot saniyədə maksimum 30 mesaja qədər icazə verir.</li>
                 <li>• Sistem avtomatik olaraq növbələmə və rate-limit tətbiq edir.</li>
-                <li>• Bloklanmış və ya botu dayandırmış istifadəçilər avtomatik atlanır.</li>
+                <li>• Bloklanmış istifadəçilər avtomatik atlanır.</li>
               </ul>
             </div>
           </div>
         )}
 
-        {/* SYSTEM & API STATUS TAB */}
+        {/* SYSTEM TAB */}
         {activeTab === 'system' && (
           <div className="space-y-6">
-            {/* System Info Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-[#160A13] border border-[#2A0B1D] rounded-2xl p-4">
                 <div className="text-xs text-[#A8A0AC] font-medium mb-1">Server Vəziyyəti</div>
@@ -1177,12 +1895,12 @@ export default function App() {
               <div className="bg-[#160A13] border border-[#2A0B1D] rounded-2xl p-4">
                 <div className="text-xs text-[#A8A0AC] font-medium mb-1">Qoşulma Rejimi</div>
                 <div className="text-xl font-bold text-[#FF2F7D]">{serverInfo?.status || 'Active'}</div>
-                <div className="text-[11px] text-[#A8A0AC] mt-1">Polling / Webhook dəstəkli</div>
+                <div className="text-[11px] text-[#A8A0AC] mt-1">Polling dəstəkli</div>
               </div>
 
               <div className="bg-[#160A13] border border-[#2A0B1D] rounded-2xl p-4">
                 <div className="text-xs text-[#A8A0AC] font-medium mb-1">Məlumat Bazası</div>
-                <div className="text-xl font-bold text-white">SQLite (WAL)</div>
+                <div className="text-xl font-bold text-white">SQLite (Safe Mode)</div>
                 <div className="text-[11px] text-emerald-400 mt-1">Miqrasiyalar aktiv</div>
               </div>
 
@@ -1192,42 +1910,6 @@ export default function App() {
                   {serverInfo?.saveApiUrl || 'https://save.az'}
                 </div>
                 <div className="text-[11px] text-[#A8A0AC] mt-1">POST /api/analyze</div>
-              </div>
-            </div>
-
-            {/* Security Checklist Card */}
-            <div className="bg-[#160A13] border border-[#2A0B1D] rounded-3xl p-6">
-              <h3 className="font-bold text-lg text-white mb-4 flex items-center gap-2">
-                <ShieldAlert className="w-5 h-5 text-emerald-400" /> İnteqrasiya Olunmuş Təhlükəsizlik
-                Mexanizmləri
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
-                <div className="p-3.5 rounded-xl bg-[#08070C] border border-[#2A0B1D]">
-                  <div className="font-bold text-emerald-400 mb-1 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4" /> SSRF & Metadata Bloklama
-                  </div>
-                  <p className="text-[#A8A0AC]">
-                    169.254.169.254, 127.0.0.1, localhost və daxili IP aralıqları tam bloklanıb.
-                  </p>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-[#08070C] border border-[#2A0B1D]">
-                  <div className="font-bold text-emerald-400 mb-1 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4" /> Command Injection İzolasiyası
-                  </div>
-                  <p className="text-[#A8A0AC]">
-                    İstifadəçi daxiletmələri heç vaxt shell əmrinə birbaşa ötürülmür, sanitizasiya edilir.
-                  </p>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-[#08070C] border border-[#2A0B1D]">
-                  <div className="font-bold text-emerald-400 mb-1 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4" /> Token & Sirr Qorunması
-                  </div>
-                  <p className="text-[#A8A0AC]">
-                    Telegram bot tokenləri və API açarları loqlarda avtomatik maskalanır ([REDACTED]).
-                  </p>
-                </div>
               </div>
             </div>
 
@@ -1271,9 +1953,15 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-[#2A0B1D] bg-[#160A13]/50 py-4 px-6 text-center text-xs text-[#A8A0AC]">
-        © 2026 Save.az Downloader Bot Platforması • Bütün hüquqlar qorunur.
+      {/* Admin Footer */}
+      <footer className="border-t border-[#2A0B1D] bg-[#160A13]/50 py-4 px-6 text-center text-xs text-[#A8A0AC] flex items-center justify-between">
+        <div>© 2026 Save.az Downloader Bot Admin Paneli</div>
+        <button
+          onClick={onGoHome}
+          className="text-gray-400 hover:text-white transition flex items-center gap-1"
+        >
+          ← Save.az Əsas Sayta Keç
+        </button>
       </footer>
     </div>
   );

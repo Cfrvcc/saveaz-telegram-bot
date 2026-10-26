@@ -13,6 +13,9 @@ export interface EnvConfig {
   WEBHOOK_DOMAIN: string;
   WEBHOOK_PATH: string;
   WEBHOOK_SECRET: string;
+  ADMIN_USERNAME: string;
+  ADMIN_PASSWORD: string;
+  ADMIN_PASSWORD_HASH: string;
   MAX_DOWNLOAD_SIZE_MB: number;
   RATE_LIMIT_PER_MINUTE: number;
   MAX_PLAYLIST_ITEMS: number;
@@ -37,6 +40,9 @@ export const config: EnvConfig = {
   WEBHOOK_DOMAIN: process.env.WEBHOOK_DOMAIN || '',
   WEBHOOK_PATH: process.env.WEBHOOK_PATH || '/telegram/webhook',
   WEBHOOK_SECRET: process.env.WEBHOOK_SECRET || 'saveaz-bot-secret-token',
+  ADMIN_USERNAME: process.env.ADMIN_USERNAME || 'admin',
+  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'SaveAzAdmin2026!',
+  ADMIN_PASSWORD_HASH: process.env.ADMIN_PASSWORD_HASH || '',
   MAX_DOWNLOAD_SIZE_MB: parseInt(process.env.MAX_DOWNLOAD_SIZE_MB || '50', 10),
   RATE_LIMIT_PER_MINUTE: parseInt(process.env.RATE_LIMIT_PER_MINUTE || '15', 10),
   MAX_PLAYLIST_ITEMS: parseInt(process.env.MAX_PLAYLIST_ITEMS || '20', 10),

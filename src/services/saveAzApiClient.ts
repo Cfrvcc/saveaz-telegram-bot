@@ -121,7 +121,7 @@ export class SaveAzApiClient {
           endpoint,
           { url },
           {
-            timeout: 25000,
+            timeout: 6000,
             headers: {
               'Content-Type': 'application/json',
               'User-Agent': 'SaveAzTelegramBot/1.0',
@@ -167,11 +167,7 @@ export class SaveAzApiClient {
         };
       } catch (err: unknown) {
         const axErr = err as AxiosError<{ message?: string; error?: string }>;
-        logger.error(`Save.az backend analizi uğursuz oldu (${endpoint})`, {
-          status: axErr.response?.status,
-          message: axErr.message,
-          data: axErr.response?.data,
-        });
+        logger.warn(`Save.az backend analizi (${endpoint}) status: ${axErr.response?.status || 'network error'}. Lokal analiz sisteminə (fallback) keçirilir...`);
 
         if (axErr.response?.status === 400 || axErr.response?.status === 422) {
           return {
@@ -181,11 +177,20 @@ export class SaveAzApiClient {
           };
         }
 
-        return {
-          success: false,
-          error: '⚠️ Hazırda serverə qoşulmaq mümkün olmadı. Bir neçə dəqiqə sonra yenidən cəhd edin.',
-          errorCode: 'PROVIDER_UNAVAILABLE',
-        };
+        // Fallback to local resolver if remote endpoint is 404 or offline
+        try {
+          const fallbackMeta = await resolveMediaMetadata(validated);
+          return {
+            success: true,
+            data: fallbackMeta,
+          };
+        } catch {
+          return {
+            success: false,
+            error: '⚠️ Hazırda serverə qoşulmaq mümkün olmadı. Bir neçə dəqiqə sonra yenidən cəhd edin.',
+            errorCode: 'PROVIDER_UNAVAILABLE',
+          };
+        }
       }
     }
 
@@ -234,7 +239,7 @@ export class SaveAzApiClient {
         };
 
         const response = await axios.post(endpoint, requestPayload, {
-          timeout: 20000,
+          timeout: 6000,
           headers: {
             'Content-Type': 'application/json',
             'User-Agent': 'SaveAzTelegramBot/1.0',
@@ -268,17 +273,26 @@ export class SaveAzApiClient {
         };
       } catch (err: unknown) {
         const axErr = err as AxiosError<{ message?: string; error?: string }>;
-        logger.error(`Save.az backend download xətası (${endpoint})`, {
-          status: axErr.response?.status,
-          message: axErr.message,
-        });
+        logger.warn(
+          `Save.az backend download (${endpoint}) status: ${axErr.response?.status || 'network error'}. Lokal emal sisteminə (fallback) keçirilir...`
+        );
 
-        return {
-          success: false,
-          jobId: '',
-          status: 'failed',
-          error: '⚠️ Hazırda serverə qoşulmaq mümkün olmadı. Bir neçə dəqiqə sonra yenidən cəhd edin.',
-        };
+        // Graceful fallback to internal download job if remote endpoint returns 404 or is offline
+        try {
+          const fallbackJob = await startDownloadJob(params);
+          return {
+            success: true,
+            jobId: fallbackJob.jobId,
+            status: fallbackJob.status,
+          };
+        } catch {
+          return {
+            success: false,
+            jobId: '',
+            status: 'failed',
+            error: '⚠️ Hazırda serverə qoşulmaq mümkün olmadı. Bir neçə dəqiqə sonra yenidən cəhd edin.',
+          };
+        }
       }
     }
 
@@ -304,6 +318,12 @@ export class SaveAzApiClient {
    * Polls job progress on Save.az backend: GET /api/download/:jobId/progress
    */
   async getProgress(jobId: string): Promise<DownloadProgress | null> {
+    // If job is already running locally (e.g. from fallback or local server), prioritize local progress
+    const localJob = getJobProgress(jobId);
+    if (localJob) {
+      return localJob;
+    }
+
     const endpoint = `${this.baseUrl}/api/download/${jobId}/progress`;
 
     if (!this.isSelfOrLocal()) {
@@ -336,7 +356,7 @@ export class SaveAzApiClient {
         };
       } catch (err: unknown) {
         logger.warn(`Save.az progress alına bilmədi: ${jobId}`, { error: String(err) });
-        return null;
+        return getJobProgress(jobId);
       }
     }
 

@@ -168,29 +168,49 @@ sudo systemctl status saveaz-bot
 
 ## 8. Nginx Reverse Proxy və SSL (Let's Encrypt)
 
-### Nginx Konfiqurasiyası
-`/etc/nginx/sites-available/bot.save.az`:
+### Nginx Konfiqurasiyası (save.az və /bot-admin yönləndirilməsi)
+
+Əsas saytınız (`https://save.az`) mövcud veb tətbiqinizdə qalır, Telegram Bot Admin paneli isə ayrıca `/bot-admin` olaraq bu servisə yönləndirilir:
+
+`/etc/nginx/sites-available/save.az`:
 ```nginx
 server {
-    server_name bot.save.az;
+    server_name save.az www.save.az;
 
-    location / {
-        proxy_pass http://127.0.0.1:3000;
+    # 1. Telegram Bot Admin Paneli və API (/bot-admin və /api/admin/*)
+    location /bot-admin {
+        proxy_pass http://127.0.0.1:3000/bot-admin;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/admin/ {
+        proxy_pass http://127.0.0.1:3000/api/admin/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 2. Əsas Public Sayt (heç bir login tələb olunmur)
+    location / {
+        proxy_pass http://127.0.0.1:3000; # və ya əsas Save.az backend portu
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
     }
 }
 ```
 
 Aktivləşdirin:
 ```bash
-sudo ln -s /etc/nginx/sites-available/bot.save.az /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/save.az /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -198,7 +218,7 @@ sudo systemctl reload nginx
 ### Pulsuz SSL Alın
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d bot.save.az
+sudo certbot --nginx -d save.az -d www.save.az
 ```
 
 ---

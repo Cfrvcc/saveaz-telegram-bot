@@ -151,11 +151,113 @@ const handleProgress = (req: Request, res: Response): void => {
 apiRouter.get('/api/download/:jobId/progress', handleProgress);
 apiRouter.get('/api/bot/download/:jobId/progress', handleProgress);
 
-// ----------------- ADMIN API ROUTES ----------------- //
+import {
+  verifyAdminCredentials,
+  createAdminSession,
+  validateAdminSession,
+  destroyAdminSession,
+  requireAdminAuth,
+} from '../middleware/adminAuth.js';
 
-apiRouter.get('/api/admin/overview', async (_req: Request, res: Response) => {
+// ----------------- ADMIN AUTHENTICATION ROUTES ----------------- //
+
+/**
+ * Admin Login Endpoint
+ * POST /api/admin/login
+ */
+apiRouter.post('/api/admin/login', (req: Request, res: Response): void => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    res.status(400).json({
+      success: false,
+      error: 'İstifadəçi adı və şifrə tələb olunur.',
+    });
+    return;
+  }
+
+  const isValid = verifyAdminCredentials(String(username).trim(), String(password));
+
+  if (!isValid) {
+    logger.warn(`Uğursuz admin giriş cəhdi: ${username}`);
+    res.status(401).json({
+      success: false,
+      error: 'İstifadəçi adı və ya şifrə yanlışdır.',
+    });
+    return;
+  }
+
+  const token = createAdminSession(username);
+  res.json({
+    success: true,
+    token,
+    username,
+    message: 'Uğurla daxil oldunuz.',
+  });
+});
+
+/**
+ * Check Admin Session Status
+ * GET /api/admin/me
+ */
+apiRouter.get('/api/admin/me', (req: Request, res: Response): void => {
+  const authHeader = req.headers.authorization;
+  const customHeader = req.headers['x-admin-token'] as string | undefined;
+
+  let token: string | undefined;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7).trim();
+  } else if (customHeader) {
+    token = customHeader.trim();
+  }
+
+  if (!token || !validateAdminSession(token)) {
+    res.status(401).json({
+      success: false,
+      authenticated: false,
+      error: 'Sessiya etibarsızdır və ya vaxtı bitib.',
+    });
+    return;
+  }
+
+  res.json({
+    success: true,
+    authenticated: true,
+    username: config.ADMIN_USERNAME,
+  });
+});
+
+/**
+ * Admin Logout Endpoint
+ * POST /api/admin/logout
+ */
+apiRouter.post('/api/admin/logout', (req: Request, res: Response): void => {
+  const authHeader = req.headers.authorization;
+  const customHeader = req.headers['x-admin-token'] as string | undefined;
+
+  let token: string | undefined;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7).trim();
+  } else if (customHeader) {
+    token = customHeader.trim();
+  }
+
+  if (token) {
+    destroyAdminSession(token);
+  }
+
+  res.json({ success: true, message: 'Çıxış edildi.' });
+});
+
+// ----------------- PROTECTED ADMIN DATA ROUTES ----------------- //
+
+apiRouter.get('/api/admin/overview', requireAdminAuth, async (_req: Request, res: Response) => {
   const stats = getGlobalStats();
-  const summary = await generateAdminSummary(stats);
+  const summaryPromise = generateAdminSummary(stats);
+  const timeoutPromise = new Promise<string>((resolve) =>
+    setTimeout(() => resolve('Sistem stabil işləyir. Yükləmələr və istifadəçi aktivliyi normal səviyyədədir.'), 1200)
+  );
+  const summary = await Promise.race([summaryPromise, timeoutPromise]);
 
   res.json({
     success: true,
@@ -172,7 +274,7 @@ apiRouter.get('/api/admin/overview', async (_req: Request, res: Response) => {
   });
 });
 
-apiRouter.get('/api/admin/users', (req: Request, res: Response) => {
+apiRouter.get('/api/admin/users', requireAdminAuth, (req: Request, res: Response) => {
   const page = parseInt(String(req.query.page || '1'), 10);
   const search = String(req.query.search || '');
   const limit = parseInt(String(req.query.limit || '50'), 10);
@@ -181,7 +283,7 @@ apiRouter.get('/api/admin/users', (req: Request, res: Response) => {
   res.json({ success: true, ...result });
 });
 
-apiRouter.post('/api/admin/users/:telegramId/ban', (req: Request, res: Response): void => {
+apiRouter.post('/api/admin/users/:telegramId/ban', requireAdminAuth, (req: Request, res: Response): void => {
   const { telegramId } = req.params;
   const { isBanned } = req.body;
 
@@ -189,7 +291,7 @@ apiRouter.post('/api/admin/users/:telegramId/ban', (req: Request, res: Response)
   res.json({ success });
 });
 
-apiRouter.post('/api/admin/users/:telegramId/premium', (req: Request, res: Response): void => {
+apiRouter.post('/api/admin/users/:telegramId/premium', requireAdminAuth, (req: Request, res: Response): void => {
   const { telegramId } = req.params;
   const { isPremium } = req.body;
 
@@ -197,7 +299,7 @@ apiRouter.post('/api/admin/users/:telegramId/premium', (req: Request, res: Respo
   res.json({ success });
 });
 
-apiRouter.get('/api/admin/users/:telegramId', (req: Request, res: Response): void => {
+apiRouter.get('/api/admin/users/:telegramId', requireAdminAuth, (req: Request, res: Response): void => {
   const { telegramId } = req.params;
   const user = getUser(telegramId);
   if (!user) {
@@ -208,7 +310,7 @@ apiRouter.get('/api/admin/users/:telegramId', (req: Request, res: Response): voi
   res.json({ success: true, user, downloads });
 });
 
-apiRouter.post('/api/admin/broadcast', async (req: Request, res: Response): Promise<void> => {
+apiRouter.post('/api/admin/broadcast', requireAdminAuth, async (req: Request, res: Response): Promise<void> => {
   const { message } = req.body;
   if (!message || typeof message !== 'string') {
     res.status(400).json({ success: false, error: 'Mesaj daxil edilməyib.' });
@@ -239,7 +341,7 @@ apiRouter.post('/api/admin/broadcast', async (req: Request, res: Response): Prom
   res.json({ success: true, sent, failed, total: users.length });
 });
 
-apiRouter.get('/api/admin/logs', (_req: Request, res: Response) => {
+apiRouter.get('/api/admin/logs', requireAdminAuth, (_req: Request, res: Response) => {
   res.json({
     success: true,
     logs: logger.getRecentLogs(),

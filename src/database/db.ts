@@ -27,9 +27,15 @@ export function getDatabase(): Database.Database {
   logger.info(`Database açılır: ${resolvedPath}`);
   dbInstance = new Database(resolvedPath);
 
-  // WAL mode for faster concurrent reads/writes
-  dbInstance.pragma('journal_mode = WAL');
-  dbInstance.pragma('foreign_keys = ON');
+  // Set safe journal mode for container/cloud filesystems to prevent disk I/O errors
+  try {
+    dbInstance.pragma('journal_mode = DELETE');
+    dbInstance.pragma('synchronous = NORMAL');
+    dbInstance.pragma('foreign_keys = ON');
+    dbInstance.pragma('busy_timeout = 5000');
+  } catch (pErr) {
+    logger.warn('SQLite pragma tətbiqində xəbərdarlıq', { error: String(pErr) });
+  }
 
   initSchema(dbInstance);
 
@@ -174,27 +180,31 @@ export function recordDownload(download: {
   duration?: number;
   title?: string;
 }): void {
-  const db = getDatabase();
-  const now = new Date().toISOString();
+  try {
+    const db = getDatabase();
+    const now = new Date().toISOString();
 
-  db.prepare(`
-    INSERT INTO downloads (id, telegram_id, url, platform, format, status, file_size, duration, title, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    download.id,
-    download.telegram_id,
-    download.url,
-    download.platform,
-    download.format,
-    download.status,
-    download.file_size || 0,
-    download.duration || 0,
-    download.title || 'Başlıqsız Media',
-    now
-  );
+    db.prepare(`
+      INSERT INTO downloads (id, telegram_id, url, platform, format, status, file_size, duration, title, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      download.id,
+      download.telegram_id,
+      download.url,
+      download.platform,
+      download.format,
+      download.status,
+      download.file_size || 0,
+      download.duration || 0,
+      download.title || 'Başlıqsız Media',
+      now
+    );
 
-  if (download.status === 'completed') {
-    db.prepare('UPDATE users SET downloads_count = downloads_count + 1 WHERE telegram_id = ?').run(download.telegram_id);
+    if (download.status === 'completed') {
+      db.prepare('UPDATE users SET downloads_count = downloads_count + 1 WHERE telegram_id = ?').run(download.telegram_id);
+    }
+  } catch (dbErr) {
+    logger.warn('Yükləmə qeyd edilərkən baza xətası', { error: String(dbErr) });
   }
 }
 

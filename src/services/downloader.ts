@@ -98,18 +98,22 @@ export async function startDownloadJob(
         }
       }
 
-      // Record to database
-      recordDownload({
-        id: jobId,
-        telegram_id: params.telegramId,
-        url: params.url,
-        platform: params.platform,
-        format: params.format,
-        status: 'completed',
-        file_size: totalBytes,
-        duration: params.duration || 60,
-        title: params.title || 'Save.az Media',
-      });
+      // Record to database safely
+      try {
+        recordDownload({
+          id: jobId,
+          telegram_id: params.telegramId,
+          url: params.url,
+          platform: params.platform,
+          format: params.format,
+          status: 'completed',
+          file_size: totalBytes,
+          duration: params.duration || 60,
+          title: params.title || 'Save.az Media',
+        });
+      } catch (recErr) {
+        logger.warn('Download qeydi bazaya yazılarkən xəta', { error: String(recErr) });
+      }
 
       logger.info(`Download işi tamamlandı: jobId=${jobId}`);
     } catch (err: unknown) {
